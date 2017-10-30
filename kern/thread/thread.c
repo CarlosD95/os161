@@ -150,10 +150,16 @@ thread_create(const char *name)
 	thread->t_did_reserve_buffers = false;
 
 	/* If you add to struct thread, be sure to initialize here */
-
+	thread->child_done = false;
 	return thread;
 }
 
+/* added this 
+void thread_join(struct thread * thread)
+{
+	lock_acquire(////
+}
+*/
 /*
  * Create a CPU structure. This is used for the bootup CPU and
  * also for secondary CPUs.
@@ -498,7 +504,7 @@ int
 thread_fork(const char *name,
 	    struct proc *proc,
 	    void (*entrypoint)(void *data1, unsigned long data2),
-	    void *data1, unsigned long data2)
+	    void *data1, unsigned long data2, int join = 0)
 {
 	struct thread *newthread;
 	int result;
@@ -546,7 +552,28 @@ thread_fork(const char *name,
 
 	/* Lock the current cpu's run queue and make the new thread runnable */
 	thread_make_runnable(newthread, false);
-
+/*	
+	va_list v1;
+	int stored2 = data2;
+	data2 = 1;
+	int val;
+	va_start(v1, data2);
+	if (!strcmp)
+		val = 1;
+	else
+		va = 0;
+*/	switch(join)
+	{
+		case 1:
+			kprintf("Hello world!");
+		break;
+		
+		default:
+			kprintf("Yo\n");
+	}
+	
+	va_end(v1);
+	data2 = stored2;
 	return 0;
 }
 
@@ -1009,7 +1036,9 @@ wchan_sleep(struct wchan *wc, struct spinlock *lk)
 
 	/* must hold the spinlock */
 	KASSERT(spinlock_do_i_hold(lk));
-
+	
+	int i = curcpu->c_spinlocks;
+	(void)i;
 	/* must not hold other spinlocks */
 	KASSERT(curcpu->c_spinlocks == 1);
 

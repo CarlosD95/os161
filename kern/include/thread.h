@@ -39,7 +39,9 @@
 #include <array.h>
 #include <spinlock.h>
 #include <threadlist.h>
-
+#include <synch.h>	//Added this for lock and cv
+#include <stdarg.h>
+#include <wchan.h>
 struct cpu;
 
 /* get machine-dependent defs */
@@ -109,6 +111,11 @@ struct thread {
 	bool t_did_reserve_buffers;	/* reserve_buffers() in effect */
 
 	/* add more here as needed */
+	volatile bool child_done;
+	struct lock t_lock;
+	struct cv t_cv;
+	struct thread *child;
+	struct wchan *t_wchan;
 };
 
 /*
@@ -133,6 +140,9 @@ void thread_panic(void);
 /* Call during system shutdown to offline other CPUs. */
 void thread_shutdown(void);
 
+/* added this. make a parent wait on a child */
+void thread_join(struct thread * thread);
+
 /*
  * Make a new thread, which will start executing at "func". The thread
  * will belong to the process "proc", or to the current thread's
@@ -145,7 +155,7 @@ void thread_shutdown(void);
  */
 int thread_fork(const char *name, struct proc *proc,
                 void (*func)(void *, unsigned long),
-                void *data1, unsigned long data2);
+                void *data1, unsigned long data2, int join = 0);
 
 /*
  * Cause the current thread to exit.
