@@ -57,6 +57,11 @@ struct cpu;
 /* Macro to test if two addresses are on the same kernel stack */
 #define SAME_STACK(p1, p2)     (((p1) & STACK_MASK) == ((p2) & STACK_MASK))
 
+/*
+struct idlist {
+	int * list;
+	struct lock i_lock;
+};*/
 
 /* States a thread can be in. */
 typedef enum {
@@ -111,11 +116,23 @@ struct thread {
 	bool t_did_reserve_buffers;	/* reserve_buffers() in effect */
 
 	/* add more here as needed */
+
+	//Parent cares about its child's done, not its own;
+
+	//Parent's flag, set by exiting child.
 	volatile bool child_done;
-	struct lock t_lock;
-	struct cv t_cv;
-	struct thread *child;
-	struct wchan *t_wchan;
+
+	/* true if thread will call thread_join(). This flag is set in 
+	 * thread_join_4k(), before the parent forks. Lets thread_fork()
+	 * know if it should initialize join-exclusive data and lets 
+	 * thread_exit() know if it can skip join-exclusive instructions.
+	 */
+	volatile bool joiner;
+	struct lock *t_lock;	//a cv
+	struct cv * t_cv;	//a lock
+	struct thread *child;	//points to a parent's child
+	struct thread *parent;	//points to a child's parent
+	int t_id;		//thread id
 };
 
 /*
@@ -141,7 +158,12 @@ void thread_panic(void);
 void thread_shutdown(void);
 
 /* added this. make a parent wait on a child */
-void thread_join(struct thread * thread);
+void thread_join(void);
+
+int thread_join_4k(const char *name, struct proc *proc,
+                void (*func)(void *, unsigned long),
+                void *data1, unsigned long data2);
+
 
 /*
  * Make a new thread, which will start executing at "func". The thread
@@ -155,7 +177,7 @@ void thread_join(struct thread * thread);
  */
 int thread_fork(const char *name, struct proc *proc,
                 void (*func)(void *, unsigned long),
-                void *data1, unsigned long data2, int join = 0);
+                void *data1, unsigned long data2);
 
 /*
  * Cause the current thread to exit.

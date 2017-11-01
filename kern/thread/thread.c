@@ -96,6 +96,16 @@ thread_checkstack_init(struct thread *thread)
  * cannot be freed (which in turn is the case if the stack is the boot
  * stack, and the thread is the boot thread) this doesn't do anything.
  */
+
+/* here, we create and initialize an idlist */
+/*
+#define MAX_THREADS = 2048;
+static struct idlist idl;
+idl->list = (int *)malloc(MAX_THREADS * sizeof(int));
+for (int i = 0; i < MAX_THREADS; i++)
+	idlist[i] = i;
+idl->i_lock = lock_create("i_lock");
+*/
 static
 void
 thread_checkstack(struct thread *thread)
@@ -150,16 +160,45 @@ thread_create(const char *name)
 	thread->t_did_reserve_buffers = false;
 
 	/* If you add to struct thread, be sure to initialize here */
-	thread->child_done = false;
+	thread->child_done = false;	//child changes this in its parent.
+	thread->joiner = false;
+	thread->t_lock = NULL;	//Only parents' locks & cv's are initialized.
+	thread->t_cv = NULL;
+	thread->child = NULL;
+	thread->parent = NULL;
 	return thread;
 }
 
-/* added this 
-void thread_join(struct thread * thread)
+/* added this */ 
+void thread_join(void)
 {
-	lock_acquire(////
+	struct thread *thread = curthread;
+	//in case both a parent and its child come here, this ensures only
+	//parents execute thread_join
+	if (thread->child != NULL)
+	{
+		//Doesn't need lock acquire because it should already have
+		//acquired it right after it was initialized
+		lock_acquire(thread->t_lock);
+		while (!thread->child_done)
+			cv_wait(thread->t_cv, thread->t_lock);
+		thread->child = NULL;
+		lock_release(thread->t_lock);
+	}
+	else
+		kprintf("This thread is childless!\n");
 }
-*/
+/* added this. Calls thread_fork and thread_join consecutively */
+int  thread_join_4k(const char *name, struct proc *proc,
+                 void (*func)(void *, unsigned long),
+                 void *data1, unsigned long data2)
+{
+	curthread->joiner = true;
+	int result = thread_fork(name, proc, func, data1, data2);
+	thread_join();
+	return result;
+}
+
 /*
  * Create a CPU structure. This is used for the bootup CPU and
  * also for secondary CPUs.
@@ -277,6 +316,12 @@ thread_destroy(struct thread *thread)
 	 * If you add things to struct thread, be sure to clean them up
 	 * either here or in thread_exit(). (And not both...)
 	 */
+		thread->parent = NULL;
+	
+	kfree(thread->parent);
+	kfree(thread->child);
+	kfree(thread->t_cv);
+	kfree(thread->t_lock);
 
 	/* VFS fields, cleaned up in thread_exit */
 	KASSERT(thread->t_did_reserve_buffers == false);
@@ -504,7 +549,7 @@ int
 thread_fork(const char *name,
 	    struct proc *proc,
 	    void (*entrypoint)(void *data1, unsigned long data2),
-	    void *data1, unsigned long data2, int join = 0)
+	    void *data1, unsigned long data2)
 {
 	struct thread *newthread;
 	int result;
@@ -528,7 +573,35 @@ thread_fork(const char *name,
 
 	/* Thread subsystem fields */
 	newthread->t_cpu = curthread->t_cpu;
+	/* 
+	 * added this. I figure here's a good place to attach to parent 
+	 * and initialize parent-only data functions.
+	 */
+	if (curthread->joiner)
+	{
 
+		curthread->t_lock = lock_create(curthread->t_name);
+		KASSERT (curthread->t_lock != NULL);
+	
+	/* 
+	 * I did the following so that when the child ends and calls cv_signal,
+	 * it can't actually signal its parent with wakeone unless its parent
+	 * is asleep, because until the parent hits cv_wait, it holds the lock.
+	 * Thanks, Prof. Yu! It didn't even occur to me to worry about what 
+	 * happens if the child signals before the parent hits wait
+	 */
+		lock_acquire(curthread->t_lock);
+
+		curthread->t_cv = cv_create(curthread->t_name);
+		KASSERT (curthread->t_cv != NULL);
+		if (curthread->child != NULL)
+		{
+			curthread->child->parent = NULL;
+		curthread->child = NULL;
+		}
+		curthread->child = newthread;	//lets parent/child access
+		newthread->parent = curthread;	//each other's data.
+	}
 	/* Attach the new thread to its process */
 	if (proc == NULL) {
 		proc = curthread->t_proc;
@@ -552,28 +625,6 @@ thread_fork(const char *name,
 
 	/* Lock the current cpu's run queue and make the new thread runnable */
 	thread_make_runnable(newthread, false);
-/*	
-	va_list v1;
-	int stored2 = data2;
-	data2 = 1;
-	int val;
-	va_start(v1, data2);
-	if (!strcmp)
-		val = 1;
-	else
-		va = 0;
-*/	switch(join)
-	{
-		case 1:
-			kprintf("Hello world!");
-		break;
-		
-		default:
-			kprintf("Yo\n");
-	}
-	
-	va_end(v1);
-	data2 = stored2;
 	return 0;
 }
 
@@ -813,7 +864,20 @@ thread_exit(void)
 	cur = curthread;
 
 	KASSERT(cur->t_did_reserve_buffers == false);
-
+	/*
+	 * added this. Doesn't need lock_release because it happens in 
+	 * cv_signal.
+	 */
+	if (cur->parent != NULL && cur->parent->joiner)
+	{	
+		lock_acquire(cur->parent->t_lock);
+			cur->parent->child_done = true;
+			cv_signal(cur->parent->t_cv, cur->parent->t_lock);
+		lock_release(cur->parent->t_lock);
+	}	
+	/* deallocation of the things I added */
+//come back: Need to allow children to have their own locks, come back, and use
+//them here.	
 	/*
 	 * Detach from our process. You might need to move this action
 	 * around, depending on how your wait/exit works.
@@ -1037,8 +1101,6 @@ wchan_sleep(struct wchan *wc, struct spinlock *lk)
 	/* must hold the spinlock */
 	KASSERT(spinlock_do_i_hold(lk));
 	
-	int i = curcpu->c_spinlocks;
-	(void)i;
 	/* must not hold other spinlocks */
 	KASSERT(curcpu->c_spinlocks == 1);
 
@@ -1244,3 +1306,12 @@ interprocessor_interrupt(void)
 	curcpu->c_ipi_pending = 0;
 	spinlock_release(&curcpu->c_ipi_lock);
 }
+/*
+struct idlist *idlist_create(const char * name)
+{
+	
+}
+bool id_available(int x)
+{
+	
+}*/

@@ -190,7 +190,8 @@ lock_acquire(struct lock *lock)
 	KASSERT(lock != NULL);
 	KASSERT(curthread->t_in_interrupt == false);
 
-
+	if (!lock_do_i_hold(lock))
+	{
 	spinlock_acquire(&lock->spin);
 	
 		while (lock->available == false)
@@ -201,7 +202,8 @@ lock_acquire(struct lock *lock)
 		lock->owner = curthread;
 		
 	spinlock_release(&lock->spin);
-        //(void)lock;  // suppress warning until code gets written
+        }
+	//(void)lock;  // suppress warning until code gets written
 }
 
 void
@@ -299,27 +301,29 @@ cv_signal(struct cv *cv, struct lock *lock)
   	KASSERT(cv != NULL);
 	
 	spinlock_acquire(&cv->cv_spin);
-	  	
+		
+		lock_release(lock);	  	
 		wchan_wakeone(cv->cv_wchan, &cv->cv_spin);
   
 	spinlock_release(&cv->cv_spin);
+	lock_acquire(lock);
 	      // Write this
 //	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+//	(void)lock;  // suppress warning until code gets written
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
 
-	(void)lock;  // suppress warning until code gets written
+//	(void)lock;  // suppress warning until code gets written
 	KASSERT(cv != NULL);
 	spinlock_acquire(&cv->cv_spin);
-	
+		lock_release(lock);	
 		wchan_wakeall(cv->cv_wchan, &cv->cv_spin);
 
 	spinlock_release(&cv->cv_spin);
-
+	lock_acquire(lock);
 	// Write this
 //	(void)cv;    // suppress warning until code gets written
 }

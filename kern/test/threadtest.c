@@ -39,7 +39,7 @@
 #define NTHREADS  8
 
 static struct semaphore *tsem = NULL;
-
+static int cnt = 1;
 static
 void
 init_sem(void)
@@ -142,5 +142,34 @@ threadtest2(int nargs, char **args)
 	runthreads(0);
 	kprintf("\nThread test 2 done.\n");
 
+	return 0;
+}
+
+static void recurse(void *junk1, unsigned long count)
+{
+	(void)junk1;
+
+	cnt++;
+	if (cnt < 4)
+		thread_join_4k("child", NULL, recurse, junk1, (count+1));
+	kprintf("%lu",count);
+}
+
+/* tt4 demonstrates how parents wait on their children. threadtest4
+ * calls a function that recurses 4 times. Each time it recurses, the 
+ * parent thread forks a child. The efficacy of my thread_join function
+ * is demonstrated in the order the threads print their information.
+ * a thread cannot continue past thread_join() and print its generation
+ * number until its child signals that it can do so in thread_exit().
+ */
+int threadtest4(int nargs, char **args)
+{
+	(void)nargs;
+	(void)args;
+	kprintf("Starting thread test 4. The threads will print their generation number, newest to oldest.\n");
+	unsigned long gen = 2;
+		thread_join_4k("child", NULL, recurse, NULL, gen);
+	
+		kprintf("1\nThread Test 4 done.\n");
 	return 0;
 }
